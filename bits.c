@@ -14,6 +14,9 @@ extern void *__stdcall VirtualAlloc(void *, unsigned long long, unsigned, unsign
 typedef long long          Bits64;
 typedef unsigned long long Size;
 typedef unsigned long      Index;
+typedef unsigned long      Count;
+typedef int                Boolean;
+typedef long long          Word;
 
 typedef struct {
 	Bits64 *pointer;
@@ -22,26 +25,77 @@ typedef struct {
 
 #define LMASK(x) (~(-1ll << (x)))
 
-static BitLocation FindClearBit2(Bits64 *p, Bits64 *q) {
+static BitLocation FindClearBit(Bits64 *p, Bits64 *q) {
 	BitLocation result;
 	__mmask8 m;
 	__m512i v, cmp;
-
+	
 	cmp = _mm512_set1_epi64(-1);
-	while (p < q) {
+	for (;;) {
+		if (p >= q) break;
 		v = _mm512_load_epi64(p);
 		m = _mm512_cmplt_epu64_mask(v, cmp);
 		if (m) break;
-		p += 8;
+		p += sizeof(v) / sizeof(*p);
 	}
 
 	int tzcnt = _tzcnt_u32(m);
 	result.pointer = p + tzcnt;
-	if (result.pointer < q) (void)_BitScanForward64(&result.index, ~*result.pointer);
+	if (result.pointer < q)
+		(void)_BitScanForward64(&result.index, ~*result.pointer);
+	return result;
+}
+
+#define WIDTHOF(x) (sizeof(x) * 8)
+#define _ffsll(x)  __builtin_ffsll(x)
+
+BitLocation FindClearBits(Size n, Bits64 *p, Bits64 *q) {
+	if (n == 1) return FindClearBit(p, q);
+	
+	BitLocation result;
+	Size c, i, j, z;
+	Bits64 w;
+	
+	result.pointer = p;
+	result.index = 0;
+	c = 0;
+	for (; p < q; ++p) {
+		w = ~*p;
+	retry:
+		result.pointer = p;
+		i = _ffsll(w);
+		if (!i) continue;
+		result.index = i - 1;
+		w |= ~(-1ll << (i - 1));
+		j = _ffsll(~w);
+		if (!j) j = WIDTHOF(*p) + 1;
+		c += j - i;
+		if (c >= n) break;
+		w &= -1ll << (j - 1);
+		if (!w) continue;
+		if (j == WIDTHOF(*p) + 1) {
+			do {
+				w = *++p;
+				if (p >= q) goto finished;
+				z = _tzcnt_u64(w);
+				c += z;
+				if (c >= n) goto finished;
+			} while (z == WIDTHOF(*p));
+			w |= ~(-1ll << (z - 1));
+			w = ~w;
+		}
+		c = 0;
+		goto retry;
+	}
+finished:
+	if (p >= q) result = (BitLocation){0, 0};
 	return result;
 }
 
 BitLocation correct;
+
+#if 0
+#define WIDTHOF(x) (sizeof(x) * 8)
 
 /* don't use */
 static BitLocation FindClearBits2(int n, Bits64 *p, Bits64 *q) {
@@ -78,6 +132,7 @@ finish:
 	result.index = 0;
 	return result;
 }
+#endif
 
 size_t ClockRate;
 size_t Start, End;
@@ -86,39 +141,35 @@ size_t Start, End;
 #define EndClock()   (void)QueryPerformanceCounter(&End)
 #define Elapse()     ((End - Start) * 1000000000 / ClockRate)
 
-#define M 10000
-#define N (sizeof(__m512i) / sizeof(Bits64) * (M))
+#define N 10000
 _Alignas(__m512i) Bits64 p[N];
 Bits64 *q = p + N;
 
-int main(void) {
+int main(int argc, char *argv[]) {
 	QueryPerformanceFrequency(&ClockRate);
-	memset(p, -1, N);
-	unsigned long long random;
+	memset(p, -1, N * sizeof(Bits64));
+	unsigned long long random = 1000;
 	_rdrand64_step(&random);
-	correct.pointer = p + random % M;
-	memset(correct.pointer, random, sizeof(__m512i));
+	correct.pointer = p + random % N;
+	memset(correct.pointer, random, sizeof(Bits64));
 	Assert(_BitScanForward64(&correct.index, ~*correct.pointer));
-	printf("random %% M: %llu\n", random % M);
+	printf("random %% N: %llu\n", random % N);
 	printf("random: %llu\n", random);
 	printf("correct.pointer: %p -> %llu\n", correct.pointer, *correct.pointer);
 	printf("correct.index: %lu\n", correct.index);
+	printf("q: %p\n", q);
 
-	BitLocation result[2];
-
-	QueryPerformanceCounter(&Start);
-	result[0] = FindClearBit2(p, q);
-	QueryPerformanceCounter(&End);
-	printf("Elapse: %llu\n", Elapse());
-	Assert(result[0].index == correct.index);
-	Assert(result[0].pointer == correct.pointer);
+	BitLocation result;
 
 	QueryPerformanceCounter(&Start);
-	result[1] = FindClearBits2(1, p, q);
+	result = FindClearBit(p, q);
 	QueryPerformanceCounter(&End);
-	printf("Elapse: %llu\n", Elapse());
-
-	for (int i = 0; i < (sizeof(result) / sizeof(result[0])); ++i) {
-		printf("[%i]: %p & %lu\n", i, result[i].pointer, result[i].index);
-	}
+	printf("elapse: %llu\n", Elapse());
+	printf("result: %p -> %llu & %lu\n", result.pointer, *result.pointer, result.index);
+	
+	QueryPerformanceCounter(&Start);
+	result = FindClearBits(3, p, q);
+	QueryPerformanceCounter(&End);
+	printf("elapse: %llu\n", Elapse());
+	printf("result: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
 }
