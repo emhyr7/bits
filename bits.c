@@ -34,7 +34,7 @@ static BitLocation FindClearBit(Bits64 *p, Bits64 *q) {
 	for (;;) {
 		if (p >= q) break;
 		v = _mm512_load_epi64(p);
-		m = _mm512_cmplt_epu64_mask(v, cmp);
+		m = _mm512_cmpneq_epu64_mask(v, cmp);
 		if (m) break;
 		p += sizeof(v) / sizeof(*p);
 	}
