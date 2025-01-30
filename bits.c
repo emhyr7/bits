@@ -116,15 +116,15 @@ size_t Start, End;
 #define EndClock()   (void)QueryPerformanceCounter(&End)
 #define Elapse()     ((End - Start) * 1000000000 / ClockRate)
 
-#define N 1000
+#define N 1000000
 _Alignas(__m512i) Bits64 p[N];
 Bits64 *q = p + N;
 
 int main(int argc, char *argv[]) {
 	QueryPerformanceFrequency(&ClockRate);
 	memset(p, -1, N * sizeof(Bits64));
-	unsigned long long random = 500;
-	_rdrand64_step(&random);
+	unsigned long long random = N - 1;
+	//_rdrand64_step(&random);
 	correct.pointer = p + random % N;
 	memset(correct.pointer, random, sizeof(Bits64));
 	Assert(_BitScanForward64(&correct.index, ~*correct.pointer));
