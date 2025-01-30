@@ -25,26 +25,41 @@ typedef struct {
 
 #define LMASK(x) (~(-1ll << (x)))
 
-static BitLocation FindClearBit(Bits64 *p, Bits64 *q) {
+static inline BitLocation DoFindBit(Boolean reverse, Boolean clear, Bits64 *p, Bits64 *q) {
 	BitLocation result;
 	__mmask8 m;
 	__m512i v, cmp;
 	
-	cmp = _mm512_set1_epi64(-1);
+	cmp = _mm512_set1_epi64(clear ? -1 : 0);
+	if (reverse) p -= 7;
 	for (;;) {
-		if (p >= q) break;
+		if (p == q) break;
+
 		v = _mm512_load_epi64(p);
 		m = _mm512_cmpneq_epu64_mask(v, cmp);
 		if (m) break;
-		p += sizeof(v) / sizeof(*p);
+
+		long long inc = sizeof(v) / sizeof(*p);
+		if (reverse) inc = -inc;
+		p += inc;
 	}
 
-	int tzcnt = _tzcnt_u32(m);
-	result.pointer = p + tzcnt;
-	if (result.pointer < q)
-		(void)_BitScanForward64(&result.index, ~*result.pointer);
+	int zcnt;
+	if (reverse) zcnt = 7 - _lzcnt_u32((unsigned)m << 24);
+	else zcnt = _tzcnt_u32(m);
+	result.pointer = p + zcnt;
+	if (result.pointer != q) {
+		Bits64 x = *result.pointer;
+		if (clear) x = ~x;
+		(void)_BitScanForward64(&result.index, x);
+	}
 	return result;
 }
+
+inline BitLocation FindSetBit         (Bits64 *p, Bits64 *q) { return DoFindBit(0, 0, p, q); }
+inline BitLocation FindClearBit       (Bits64 *p, Bits64 *q) { return DoFindBit(0, 1, p, q); }
+inline BitLocation ReverseFindSetBit  (Bits64 *p, Bits64 *q) { return DoFindBit(1, 0, p, q); }
+inline BitLocation ReverseFindClearBit(Bits64 *p, Bits64 *q) { return DoFindBit(1, 1, p, q); }
 
 #define WIDTHOF(x) (sizeof(x) * 8)
 #define _ffsll(x)  __builtin_ffsll(x)
@@ -94,46 +109,6 @@ finished:
 
 BitLocation correct;
 
-#if 0
-#define WIDTHOF(x) (sizeof(x) * 8)
-
-/* don't use */
-static BitLocation FindClearBits2(int n, Bits64 *p, Bits64 *q) {
-	BitLocation result;
-	unsigned long i;
-	__mmask8 mask;
-	__m512i v, vl, vh, vmask, vcmp, vlzcnt, vomask;
-	
-	Assert(n <= 32);
-
-	vomask = _mm512_set1_epi64(-1);
-	vmask = _mm512_set1_epi64(n);
-	while (p < q) {
-		v = _mm512_load_epi64(p);
-		for (;;) {
-			mask = _mm512_cmpeq_epi64_mask(v, vomask);
-			if (mask == 0xff) break;
-			vlzcnt = _mm512_lzcnt_epi64(v);
-			mask = _mm512_cmpge_epi64_mask(vlzcnt, vmask);
-			if (mask) goto finish;
-			v = _mm512_sllv_epi64(v, vlzcnt);
-			v = _mm512_xor_epi64(v, v);
-			vlzcnt = _mm512_lzcnt_epi64(v);
-			v = _mm512_sllv_epi64(v, vlzcnt);
-			v = _mm512_xor_epi64(v, v);
-		}
-		mask = 0;
-
-		p += 8;
-	}
-finish:
-	int tzcnt = _tzcnt_u32(mask);
-	result.pointer = p + tzcnt;
-	result.index = 0;
-	return result;
-}
-#endif
-
 size_t ClockRate;
 size_t Start, End;
 
@@ -141,14 +116,14 @@ size_t Start, End;
 #define EndClock()   (void)QueryPerformanceCounter(&End)
 #define Elapse()     ((End - Start) * 1000000000 / ClockRate)
 
-#define N 10000
+#define N 1000
 _Alignas(__m512i) Bits64 p[N];
 Bits64 *q = p + N;
 
 int main(int argc, char *argv[]) {
 	QueryPerformanceFrequency(&ClockRate);
 	memset(p, -1, N * sizeof(Bits64));
-	unsigned long long random = 1000;
+	unsigned long long random = 500;
 	_rdrand64_step(&random);
 	correct.pointer = p + random % N;
 	memset(correct.pointer, random, sizeof(Bits64));
@@ -159,17 +134,28 @@ int main(int argc, char *argv[]) {
 	printf("correct.index: %lu\n", correct.index);
 	printf("q: %p\n", q);
 
+	printf("\n\n");
+
 	BitLocation result;
 
+	printf("FindClearBit:\n");
 	QueryPerformanceCounter(&Start);
 	result = FindClearBit(p, q);
 	QueryPerformanceCounter(&End);
-	printf("elapse: %llu\n", Elapse());
-	printf("result: %p -> %llu & %lu\n", result.pointer, *result.pointer, result.index);
+	printf("\telapse: %llu\n", Elapse());
+	printf("\tresult: %p -> %llu & %lu\n", result.pointer, *result.pointer, result.index);
 	
+	printf("ReverseFindClearBit:\n");
+	QueryPerformanceCounter(&Start);
+	result = ReverseFindClearBit(q - 1, p - 1);
+	QueryPerformanceCounter(&End);
+	printf("\telapse: %llu\n", Elapse());
+	printf("\tresult: %p -> %llu & %lu\n", result.pointer, *result.pointer, result.index);
+	
+	printf("FindClearBits:\n");
 	QueryPerformanceCounter(&Start);
 	result = FindClearBits(3, p, q);
 	QueryPerformanceCounter(&End);
-	printf("elapse: %llu\n", Elapse());
-	printf("result: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
+	printf("\telapse: %llu\n", Elapse());
+	printf("\tresult: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
 }
