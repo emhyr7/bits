@@ -1,42 +1,37 @@
-#include <stdio.h>
-#include <immintrin.h>
-#include <stdlib.h>
-#include <memory.h>
+#if !defined(INCLUDED_BITS_H)
+#define INCLUDED_BITS_H
 
-#if defined(_WIN32)
-
-#include <intrin.h>
-
-extern int __stdcall QueryPerformanceCounter  (unsigned long long *);
-extern int __stdcall QueryPerformanceFrequency(unsigned long long *);
-
-extern void *__stdcall VirtualAlloc(void *, unsigned long long, unsigned, unsigned);
-
-#endif
-
-#if defined(__clang__) || defined(__GNUC__)
-#define TRAP() __builtin_debugtrap()
-#elif defined(_MSC_VER)
-#define TRAP() __debugbreak()
-#endif
-
-#define Assert(x) do { if (!(x)) TRAP(); } while (0)
-
-typedef unsigned long long Bits64;
-typedef unsigned long long Size;
-typedef unsigned long      Index;
-typedef unsigned long      Count;
-typedef int                Boolean;
-typedef long long          Word;
+#include "base.h"
 
 typedef struct {
 	Bits64 *pointer;
 	Index   index; /* index begins at 1 from `*pointer` */
 } BitLocation;
 
-#define LMASK(x) (~(-1ll << (x)))
+PUBLIC BitLocation FindSetBit         (Bits64 *p, Bits64 *q);
+PUBLIC BitLocation FindClearBit       (Bits64 *p, Bits64 *q);
+PUBLIC BitLocation ReverseFindSetBit  (Bits64 *p, Bits64 *q);
+PUBLIC BitLocation ReverseFindClearBit(Bits64 *p, Bits64 *q);
 
-typedef Word Flags;
+PUBLIC BitLocation FindSetBits         (Size n, Bits64 *p, Bits64 *q);
+PUBLIC BitLocation FindClearBits       (Size n, Bits64 *p, Bits64 *q);
+PUBLIC BitLocation ReverseFindSetBits  (Size n, Bits64 *p, Bits64 *q);
+PUBLIC BitLocation ReverseFindClearBits(Size n, Bits64 *p, Bits64 *q);
+
+PUBLIC void SetBits         (Size n, BitLocation location);
+PUBLIC void ClearBits       (Size n, BitLocation location);
+PUBLIC void ReverseSetBits  (Size n, BitLocation location);
+PUBLIC void ReverseClearBits(Size n, BitLocation location);
+
+/******************************************************************************/
+
+#if defined(IMPLEMENT_BITS_H)
+
+#include <immintrin.h>
+
+#if defined(_WIN32)
+#include <intrin.h>
+#endif
 
 #if defined(__clang__) || defined(__GNUC__)
 #define _ffsll(x) __builtin_ffsll(x)
@@ -187,69 +182,6 @@ void ClearBits       (Size n, BitLocation location) { return DoSetBits(0, 1, n, 
 void ReverseSetBits  (Size n, BitLocation location) { return DoSetBits(1, 0, n, location); }
 void ReverseClearBits(Size n, BitLocation location) { return DoSetBits(1, 1, n, location); }
 
-BitLocation correct;
+#endif
 
-size_t ClockRate;
-size_t Start, End;
-
-#define BeginClock() (void)QueryPerformanceCounter(&Start)
-#define EndClock()   (void)QueryPerformanceCounter(&End)
-#define Elapse()     ((End - Start) * 1000000000 / ClockRate)
-
-#define N 1000000
-_Alignas(__m512i) Bits64 p[N];
-Bits64 *q = p + N;
-
-int main(int argc, char *argv[]) {
-	QueryPerformanceFrequency(&ClockRate);
-	memset(p, -1, N * sizeof(Bits64));
-	unsigned long long random = 128;
-	_rdrand64_step(&random);
-	correct.pointer = p + random % N;
-	memset(correct.pointer, random, sizeof(Bits64));
-	Assert(_BitScanForward64(&correct.index, ~*correct.pointer));
-	printf("random %% N: %llu\n", random % N);
-	printf("random: %llu\n", random);
-	printf("correct.pointer: %p -> %llu\n", correct.pointer, *correct.pointer);
-	printf("correct.index: %lu\n", correct.index);
-	printf("q: %p\n", q);
-
-	printf("\n\n");
-
-	BitLocation result;
-
-	printf("FindClearBit:\n");
-	QueryPerformanceCounter(&Start);
-	result = FindClearBit(p, q);
-	QueryPerformanceCounter(&End);
-	printf("\telapse: %llu\n", Elapse());
-	printf("\tresult: %p -> %llu & %lu\n", result.pointer, *result.pointer, result.index);
-
-	printf("SetBits:\n");
-	QueryPerformanceCounter(&Start);
-	SetBits(random % 256, result);
-	QueryPerformanceCounter(&End);
-	printf("\telapse: %llu\n", Elapse());
-	printf("\tresult: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
-	
-	printf("ReverseFindClearBit:\n");
-	QueryPerformanceCounter(&Start);
-	result = ReverseFindClearBit(q - 1, p - 1);
-	QueryPerformanceCounter(&End);
-	printf("\telapse: %llu\n", Elapse());
-	printf("\tresult: %p -> %llu & %lu\n", result.pointer, *result.pointer, result.index);
-	
-	printf("FindClearBits:\n");
-	QueryPerformanceCounter(&Start);
-	result = FindClearBits(1, p, q);
-	QueryPerformanceCounter(&End);
-	printf("\telapse: %llu\n", Elapse());
-	printf("\tresult: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
-	
-	printf("ReverseFindClearBits:\n");
-	QueryPerformanceCounter(&Start);
-	result = ReverseFindClearBits(1, q - 1, p - 1);
-	QueryPerformanceCounter(&End);
-	printf("\telapse: %llu\n", Elapse());
-	printf("\tresult: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
-}
+#endif
