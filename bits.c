@@ -22,7 +22,7 @@ extern void *__stdcall VirtualAlloc(void *, unsigned long long, unsigned, unsign
 
 #define Assert(x) do { if (!(x)) TRAP(); } while (0)
 
-typedef long long          Bits64;
+typedef unsigned long long Bits64;
 typedef unsigned long long Size;
 typedef unsigned long      Index;
 typedef unsigned long      Count;
@@ -31,7 +31,7 @@ typedef long long          Word;
 
 typedef struct {
 	Bits64 *pointer;
-	Index   index;
+	Index   index; /* index begins at 1 from `*pointer` */
 } BitLocation;
 
 #define LMASK(x) (~(-1ll << (x)))
@@ -149,6 +149,44 @@ BitLocation FindClearBits       (Size n, Bits64 *p, Bits64 *q) { return DoFindBi
 BitLocation ReverseFindSetBits  (Size n, Bits64 *p, Bits64 *q) { return DoFindBits(1, 0, n, p, q); }
 BitLocation ReverseFindClearBits(Size n, Bits64 *p, Bits64 *q) { return DoFindBits(1, 1, n, p, q); }
 
+static inline void DoSetBits(Boolean reverse, Boolean clear, Size n, BitLocation location) {
+	Assert(n);
+	Assert(location.pointer && location.index < WIDTHOF(*location.pointer));
+
+	Bits64 *p, m;
+	long long i, k;
+	Size c;
+
+	p = location.pointer;
+	*p = 0;
+	c = WIDTHOF(*location.pointer) - location.index;
+	if (n < c) c = n;
+	m = ~(c < 64 ? -1ll << c : 0) << location.index;
+	if (clear) *p &= ~m;
+	else *p |= m;
+	if (reverse) --p;
+	else ++p;
+	n -= c;
+	if (!n) return;
+	c = WIDTHOF(*location.pointer);
+	k = n / c;
+	n -= c * k;
+	m = clear ? 0 : -1ll;
+	for (i = 0; i < k; ++i) {
+		*p = m;
+		if (reverse) --p;
+		else ++p;
+	}
+	m = -1ll >> (c - n);
+	if (clear) *p &= ~m;
+	else *p |= m;
+}
+
+void SetBits         (Size n, BitLocation location) { return DoSetBits(0, 0, n, location); }
+void ClearBits       (Size n, BitLocation location) { return DoSetBits(0, 1, n, location); }
+void ReverseSetBits  (Size n, BitLocation location) { return DoSetBits(1, 0, n, location); }
+void ReverseClearBits(Size n, BitLocation location) { return DoSetBits(1, 1, n, location); }
+
 BitLocation correct;
 
 size_t ClockRate;
@@ -186,6 +224,13 @@ int main(int argc, char *argv[]) {
 	QueryPerformanceCounter(&End);
 	printf("\telapse: %llu\n", Elapse());
 	printf("\tresult: %p -> %llu & %lu\n", result.pointer, *result.pointer, result.index);
+
+	printf("SetBits:\n");
+	QueryPerformanceCounter(&Start);
+	SetBits(random % 256, result);
+	QueryPerformanceCounter(&End);
+	printf("\telapse: %llu\n", Elapse());
+	printf("\tresult: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
 	
 	printf("ReverseFindClearBit:\n");
 	QueryPerformanceCounter(&Start);
@@ -201,7 +246,7 @@ int main(int argc, char *argv[]) {
 	printf("\telapse: %llu\n", Elapse());
 	printf("\tresult: %p -> %llu & %lu\n", result.pointer, result.pointer ? *result.pointer : 0, result.index);
 	
-	printf("FindClearBits:\n");
+	printf("ReverseFindClearBits:\n");
 	QueryPerformanceCounter(&Start);
 	result = ReverseFindClearBits(1, q - 1, p - 1);
 	QueryPerformanceCounter(&End);
